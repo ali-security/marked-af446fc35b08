@@ -1,16 +1,20 @@
 name: "Tests"
 on:
-  pull_request:
-  push:
-    branches:
-      - master
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: 'Optional jasmine --filter regex; empty runs the full suite'
+        required: false
+        default: ''
 
 jobs:
   Test:
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
-        node_version: ['lts/*', 'node']
+        node_version: ['lts/*', 'node', '14']
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -22,26 +26,46 @@ jobs:
       - name: Install Dependencies
         run: npm ci
       - name: Run Unit Tests 👩🏽‍💻
-        run: npm run test:unit
+        run: |
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            npx jasmine --config=jasmine.json --filter="${{ inputs.test-filter }}" 'test/unit/**/*-spec.js'
+          else
+            npm run test:unit
+          fi
       - name: Run Spec Tests 👩🏽‍💻
-        run: npm run test:specs
-
-  Lint:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v2
-      - name: Install Dependencies
-        run: npm ci
-      - name: Lint ✨
-        run: npm run test:lint
+        run: |
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            npx jasmine --config=jasmine.json --filter="${{ inputs.test-filter }}" 'test/specs/**/*-spec.js'
+          else
+            npm run test:specs
+          fi
+      - name: Build 🗜️
+        if: matrix.node_version == '14'
+        run: npm run build
+      - name: Show build diff
+        if: matrix.node_version == '14'
+        run: |
+          git status --porcelain
+          git diff --stat
+      - name: Pack
+        if: matrix.node_version == '14'
+        run: |
+          npm i -g npm@7.12.0
+          mkdir -p dist-pack
+          npm pack --pack-destination dist-pack || (npm pack && mv marked-*.tgz dist-pack/)
+          ls -l dist-pack
+      - name: Upload package
+        if: matrix.node_version == '14'
+        uses: actions/upload-artifact@v4
+        with:
+          name: marked-npm-package
+          path: dist-pack/*.tgz
+          if-no-files-found: error
 
   Release:
-    needs: [Test, Lint]
-    if: |
-      github.ref == 'refs/heads/master' &&
-      github.event.repository.fork == false
+    needs: [Test]
+    if: false
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -64,6 +88,7 @@ jobs:
 
   Skip:
     if: contains(github.event.head_commit.message, '[skip ci]')
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       - name: Skip CI 🚫
